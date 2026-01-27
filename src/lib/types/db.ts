@@ -47,6 +47,7 @@ export interface SalesOrder {
   id: string;
   user_id: string;
   platform: string | null;
+  session_name: string | null;
   order_date: string;
   buyer_handle: string | null;
   shipping_charged: number | null;

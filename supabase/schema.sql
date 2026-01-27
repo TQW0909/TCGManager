@@ -54,6 +54,8 @@ create table public.sales_orders (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   platform text,
+  -- Whatnot sellers think in "streams/sessions". MVP uses sales_orders as the session container.
+  session_name text,
   order_date timestamptz not null default now(),
   buyer_handle text,
   shipping_charged numeric(12,2),
