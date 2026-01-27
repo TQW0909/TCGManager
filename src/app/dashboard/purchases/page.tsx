@@ -1,21 +1,28 @@
-const lots = [
-  {
-    name: "Scarlet & Violet booster box",
-    qty: 3,
-    cost: "$330",
-    unit: "$110",
-    date: "2024-12-12",
-  },
-  {
-    name: "Charizard EX singles lot (NM)",
-    qty: 12,
-    cost: "$180",
-    unit: "$15",
-    date: "2024-12-10",
-  },
-];
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { PurchaseLotForm } from "@/components/purchases/purchase-lot-form";
 
-export default function PurchasesPage() {
+export const dynamic = "force-dynamic";
+
+export default async function PurchasesPage() {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: products, error: productsError } = await supabase
+    .from("products")
+    .select("id,name,game,type")
+    .order("created_at", { ascending: false });
+
+  if (productsError) throw new Error(productsError.message);
+
+  const { data: lots, error: lotsError } = await supabase
+    .from("inventory_lots")
+    .select(
+      "id,quantity_total,quantity_available,purchase_date,purchase_price_total,fees_total,shipping_total,created_at, product:products(id,name,game,type)"
+    )
+    .order("purchase_date", { ascending: false })
+    .limit(50);
+
+  if (lotsError) throw new Error(lotsError.message);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-2">
@@ -26,77 +33,58 @@ export default function PurchasesPage() {
         </p>
       </div>
 
-      <div className="glass rounded-2xl p-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-slate-50">New purchase</p>
-            <p className="text-sm text-slate-300">
-              Tie purchases to products and track fees + shipping on the buy side.
-            </p>
-          </div>
-          <button className="rounded-lg bg-sky-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400">
-            Add lot
-          </button>
-        </div>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
-              Product
-            </label>
-            <input
-              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
-              placeholder="Scarlet & Violet booster box"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
-              Quantity
-            </label>
-            <input
-              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
-              placeholder="3"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
-              Total cost (with fees/shipping)
-            </label>
-            <input
-              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
-              placeholder="330.00"
-            />
-          </div>
-        </div>
-      </div>
+      <PurchaseLotForm products={products ?? []} />
 
       <div className="glass rounded-2xl p-6">
         <div className="flex flex-col gap-1">
           <p className="text-sm font-semibold text-slate-50">Recent lots</p>
           <p className="text-sm text-slate-300">
-            Pull from `inventory_lots` joined to `products` to show quantities and
-            unit cost.
+            Your last 50 lots. Unit cost is computed as total / qty.
           </p>
         </div>
         <div className="mt-4 grid gap-3">
-          {lots.map((lot) => (
-            <div
-              key={lot.name}
-              className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-slate-50">{lot.name}</p>
-                  <p className="text-xs text-slate-400">
-                    Purchased {lot.date} · Qty {lot.qty}
-                  </p>
-                </div>
-                <div className="text-right text-sm text-slate-200">
-                  <p>Total {lot.cost}</p>
-                  <p className="text-xs text-slate-400">Unit {lot.unit}</p>
+          {lots?.map((lot) => {
+            const p = lot.product as unknown as {
+              id: string;
+              name: string;
+              game: string | null;
+              type: string;
+            } | null;
+            const unit =
+              lot.quantity_total > 0
+                ? Number(lot.purchase_price_total) / lot.quantity_total
+                : 0;
+            return (
+              <div
+                key={lot.id}
+                className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-medium text-slate-50">
+                      {p?.name ?? "(Unknown product)"}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      Purchased {lot.purchase_date} · Qty {lot.quantity_total} ·
+                      Available {lot.quantity_available}
+                    </p>
+                  </div>
+                  <div className="text-right text-sm text-slate-200">
+                    <p>Total ${Number(lot.purchase_price_total).toFixed(2)}</p>
+                    <p className="text-xs text-slate-400">
+                      Unit ${unit.toFixed(2)}
+                    </p>
+                  </div>
                 </div>
               </div>
+            );
+          })}
+
+          {lots?.length ? null : (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-8 text-center text-sm text-slate-400">
+              No lots yet. Add your first purchase above.
             </div>
-          ))}
+          )}
         </div>
       </div>
     </div>
