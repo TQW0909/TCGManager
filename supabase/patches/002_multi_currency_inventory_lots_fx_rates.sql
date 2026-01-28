@@ -16,13 +16,16 @@ alter table public.fx_rates enable row level security;
 
 -- Allow any authenticated user to read/write cached rates.
 -- (Rates are not user data; this keeps the cache usable from the app without a service key.)
-create policy if not exists "FX rates are readable by authenticated" on public.fx_rates
+drop policy if exists "FX rates are readable by authenticated" on public.fx_rates;
+create policy "FX rates are readable by authenticated" on public.fx_rates
   for select to authenticated using (true);
 
-create policy if not exists "FX rates are writable by authenticated" on public.fx_rates
+drop policy if exists "FX rates are writable by authenticated" on public.fx_rates;
+create policy "FX rates are writable by authenticated" on public.fx_rates
   for insert to authenticated with check (true);
 
-create policy if not exists "FX rates are updatable by authenticated" on public.fx_rates
+drop policy if exists "FX rates are updatable by authenticated" on public.fx_rates;
+create policy "FX rates are updatable by authenticated" on public.fx_rates
   for update to authenticated using (true) with check (true);
 
 -- Inventory lots: store native currency + converted USD + fx rate used.
