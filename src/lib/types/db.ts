@@ -37,9 +37,22 @@ export interface InventoryLot {
   quantity_total: number;
   quantity_available: number;
   purchase_date: string;
+
+  // Legacy USD columns
   purchase_price_total: number;
   fees_total: number | null;
   shipping_total: number | null;
+
+  // Multi-currency purchase capture
+  purchase_currency: "USD" | "CNY";
+  fx_rate_to_usd: number | null;
+  purchase_price_total_native: number | null;
+  purchase_price_total_usd: number | null;
+  fees_total_native: number | null;
+  fees_total_usd: number | null;
+  shipping_total_native: number | null;
+  shipping_total_usd: number | null;
+
   created_at: string;
 }
 

@@ -17,6 +17,7 @@ export function PurchaseLotForm({ products }: { products: ProductLite[] }) {
     return d.toISOString().slice(0, 10);
   });
   const [qty, setQty] = useState("1");
+  const [currency, setCurrency] = useState<"USD" | "CNY">("USD");
   const [priceTotal, setPriceTotal] = useState("");
   const [feesTotal, setFeesTotal] = useState("");
   const [shippingTotal, setShippingTotal] = useState("");
@@ -46,15 +47,52 @@ export function PurchaseLotForm({ products }: { products: ProductLite[] }) {
 
     const quantityTotal = Math.floor(Number(qty));
 
+    const nativePurchase = Number(priceTotal);
+    const nativeFees = feesTotal ? Number(feesTotal) : null;
+    const nativeShipping = shippingTotal ? Number(shippingTotal) : null;
+
+    let fxRateToUsd = 1;
+    if (currency === "CNY") {
+      const fxRes = await fetch(`/api/fx-rate?base=CNY&quote=USD`);
+      const fxJson = await fxRes.json();
+      if (!fxRes.ok) {
+        setLoading(false);
+        setError(fxJson?.error ?? "Failed to fetch FX rate.");
+        return;
+      }
+      fxRateToUsd = Number(fxJson.rate);
+      if (!Number.isFinite(fxRateToUsd) || fxRateToUsd <= 0) {
+        setLoading(false);
+        setError("Invalid FX rate.");
+        return;
+      }
+    }
+
+    const purchaseUsd = nativePurchase * fxRateToUsd;
+    const feesUsd = nativeFees == null ? null : nativeFees * fxRateToUsd;
+    const shippingUsd = nativeShipping == null ? null : nativeShipping * fxRateToUsd;
+
     const payload = {
       user_id: userRes.user.id,
       product_id: productId,
       quantity_total: quantityTotal,
       quantity_available: quantityTotal,
       purchase_date: purchaseDate,
-      purchase_price_total: Number(priceTotal),
-      fees_total: feesTotal ? Number(feesTotal) : null,
-      shipping_total: shippingTotal ? Number(shippingTotal) : null,
+
+      // Legacy columns (treated as USD)
+      purchase_price_total: purchaseUsd,
+      fees_total: feesUsd,
+      shipping_total: shippingUsd,
+
+      // New multi-currency columns
+      purchase_currency: currency,
+      fx_rate_to_usd: fxRateToUsd,
+      purchase_price_total_native: nativePurchase,
+      purchase_price_total_usd: purchaseUsd,
+      fees_total_native: nativeFees,
+      fees_total_usd: feesUsd,
+      shipping_total_native: nativeShipping,
+      shipping_total_usd: shippingUsd,
     };
 
     const { error: insertErr } = await supabase.from("inventory_lots").insert(payload);
@@ -129,6 +167,20 @@ export function PurchaseLotForm({ products }: { products: ProductLite[] }) {
             className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
             placeholder="e.g., 6"
           />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Currency
+          </label>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as "USD" | "CNY")}
+            className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
+          >
+            <option value="USD">USD ($)</option>
+            <option value="CNY">CNY (¥)</option>
+          </select>
         </div>
 
         <div className="space-y-2">

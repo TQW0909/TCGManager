@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PurchaseLotForm } from "@/components/purchases/purchase-lot-form";
+import { formatMoney, type SupportedCurrency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export default async function PurchasesPage() {
   const { data: lots, error: lotsError } = await supabase
     .from("inventory_lots")
     .select(
-      "id,quantity_total,quantity_available,purchase_date,purchase_price_total,fees_total,shipping_total,created_at, product:products(id,name,game,type)"
+      "id,quantity_total,quantity_available,purchase_date,purchase_currency,fx_rate_to_usd,purchase_price_total_native,purchase_price_total_usd,purchase_price_total,fees_total,shipping_total,created_at, product:products(id,name,game,type)"
     )
     .order("purchase_date", { ascending: false })
     .limit(50);
@@ -50,10 +51,20 @@ export default async function PurchasesPage() {
               game: string | null;
               type: string;
             } | null;
-            const unit =
-              lot.quantity_total > 0
-                ? Number(lot.purchase_price_total) / lot.quantity_total
-                : 0;
+            const lotFx = lot as unknown as {
+              purchase_currency?: SupportedCurrency | null;
+              purchase_price_total_native?: number | null;
+              purchase_price_total_usd?: number | null;
+            };
+
+            const currency = (lotFx.purchase_currency ?? "USD") as SupportedCurrency;
+            const nativeTotal = Number(
+              lotFx.purchase_price_total_native ?? lot.purchase_price_total
+            );
+            const usdTotal = Number(lotFx.purchase_price_total_usd ?? lot.purchase_price_total);
+
+            const unitUsd = lot.quantity_total > 0 ? usdTotal / lot.quantity_total : 0;
+            const unitNative = lot.quantity_total > 0 ? nativeTotal / lot.quantity_total : 0;
             return (
               <div
                 key={lot.id}
@@ -70,9 +81,21 @@ export default async function PurchasesPage() {
                     </p>
                   </div>
                   <div className="text-right text-sm text-slate-200">
-                    <p>Total ${Number(lot.purchase_price_total).toFixed(2)}</p>
+                    <p>
+                      Total {formatMoney(nativeTotal, currency)}
+                      {currency === "USD" ? null : (
+                        <span className="text-slate-400">
+                          {" "}(= {formatMoney(usdTotal, "USD")})
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-slate-400">
-                      Unit ${unit.toFixed(2)}
+                      Unit {formatMoney(unitNative, currency)}
+                      {currency === "USD" ? null : (
+                        <>
+                          {" "}(= {formatMoney(unitUsd, "USD")})
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>

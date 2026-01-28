@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,8 @@ type Row = {
   game: string | null;
   type: string;
   onHand: number;
-  costBasisRemaining: number;
+  costBasisRemainingUsd: number;
+  costBasisRemainingCnyNative: number;
 };
 
 export default async function InventoryPage() {
@@ -17,7 +19,7 @@ export default async function InventoryPage() {
   const { data: lots, error } = await supabase
     .from("inventory_lots")
     .select(
-      "id,quantity_total,quantity_available,purchase_price_total, product:products(id,name,game,type)"
+      "id,quantity_total,quantity_available,purchase_currency,purchase_price_total_native,purchase_price_total_usd,purchase_price_total, product:products(id,name,game,type)"
     )
     .order("created_at", { ascending: false })
     .limit(500);
@@ -35,16 +37,29 @@ export default async function InventoryPage() {
     } | null;
     if (!p) continue;
 
-    const unitCost =
-      lot.quantity_total > 0
-        ? Number(lot.purchase_price_total) / lot.quantity_total
-        : 0;
-    const addCost = unitCost * Number(lot.quantity_available);
+    const lotFx = lot as unknown as {
+      purchase_price_total_usd?: number | null;
+      purchase_price_total_native?: number | null;
+      purchase_currency?: "USD" | "CNY" | null;
+    };
+
+    const usdTotal = Number(lotFx.purchase_price_total_usd ?? lot.purchase_price_total);
+    const nativeTotal = Number(
+      lotFx.purchase_price_total_native ?? lot.purchase_price_total
+    );
+    const currency = (lotFx.purchase_currency ?? "USD") as "USD" | "CNY";
+
+    const unitUsd = lot.quantity_total > 0 ? usdTotal / lot.quantity_total : 0;
+    const addUsd = unitUsd * Number(lot.quantity_available);
+
+    const unitNative = lot.quantity_total > 0 ? nativeTotal / lot.quantity_total : 0;
+    const addCnyNative = currency === "CNY" ? unitNative * Number(lot.quantity_available) : 0;
 
     const existing = map.get(p.id);
     if (existing) {
       existing.onHand += Number(lot.quantity_available);
-      existing.costBasisRemaining += addCost;
+      existing.costBasisRemainingUsd += addUsd;
+      existing.costBasisRemainingCnyNative += addCnyNative;
     } else {
       map.set(p.id, {
         productId: p.id,
@@ -52,13 +67,14 @@ export default async function InventoryPage() {
         game: p.game,
         type: p.type,
         onHand: Number(lot.quantity_available),
-        costBasisRemaining: addCost,
+        costBasisRemainingUsd: addUsd,
+        costBasisRemainingCnyNative: addCnyNative,
       });
     }
   }
 
   const rows = Array.from(map.values()).sort(
-    (a, b) => b.costBasisRemaining - a.costBasisRemaining
+    (a, b) => b.costBasisRemainingUsd - a.costBasisRemainingUsd
   );
 
   return (
@@ -100,7 +116,12 @@ export default async function InventoryPage() {
                   <td className="px-4 py-3 text-slate-300">{item.type}</td>
                   <td className="px-4 py-3">{item.onHand}</td>
                   <td className="px-4 py-3">
-                    ${item.costBasisRemaining.toFixed(2)}
+                    {formatMoney(item.costBasisRemainingUsd, "USD")}
+                    {item.costBasisRemainingCnyNative > 0 ? (
+                      <div className="text-xs text-slate-400">
+                        Native {formatMoney(item.costBasisRemainingCnyNative, "CNY")}
+                      </div>
+                    ) : null}
                   </td>
                 </tr>
               ))}

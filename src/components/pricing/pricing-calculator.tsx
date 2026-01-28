@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { formatMoney } from "@/lib/money";
 
 function toNumber(value: string) {
   const n = Number(value);
@@ -9,6 +10,10 @@ function toNumber(value: string) {
 
 export function PricingCalculator() {
   const [unitCost, setUnitCost] = useState("0");
+  const [unitCostCurrency, setUnitCostCurrency] = useState<"USD" | "CNY">("USD");
+  const [fxRateToUsd, setFxRateToUsd] = useState(1);
+  const [fxError, setFxError] = useState<string | null>(null);
+  const [fxLoading, setFxLoading] = useState(false);
   // Whatnot-style default model (based on the breakdown Ting provided)
   // - Commission: % of sale price
   // - Processing: % of order total (sale + buyer shipping + buyer tax) + fixed fee
@@ -21,8 +26,38 @@ export function PricingCalculator() {
   const [shippingCost, setShippingCost] = useState("0");
   const [targetProfit, setTargetProfit] = useState("5");
 
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      setFxError(null);
+      if (unitCostCurrency === "USD") {
+        setFxRateToUsd(1);
+        return;
+      }
+      setFxLoading(true);
+      try {
+        const res = await fetch(`/api/fx-rate?base=CNY&quote=USD`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error ?? "Failed to fetch FX rate");
+        const rate = Number(json.rate);
+        if (!Number.isFinite(rate) || rate <= 0) throw new Error("Invalid FX rate");
+        if (!cancelled) setFxRateToUsd(rate);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "FX rate error";
+        if (!cancelled) setFxError(msg);
+      } finally {
+        if (!cancelled) setFxLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [unitCostCurrency]);
+
   const result = useMemo(() => {
-    const cost = toNumber(unitCost);
+    const nativeCost = toNumber(unitCost);
+    const cost = unitCostCurrency === "USD" ? nativeCost : nativeCost * fxRateToUsd;
 
     const comm = toNumber(commissionPct) / 100;
     const procPct = toNumber(processingPct) / 100;
@@ -67,6 +102,8 @@ export function PricingCalculator() {
     };
   }, [
     unitCost,
+    unitCostCurrency,
+    fxRateToUsd,
     commissionPct,
     processingPct,
     processingFixed,
@@ -90,6 +127,21 @@ export function PricingCalculator() {
             placeholder="e.g., 7.50"
             inputMode="decimal"
           />
+          <div className="flex items-center gap-3">
+            <select
+              value={unitCostCurrency}
+              onChange={(e) => setUnitCostCurrency(e.target.value as "USD" | "CNY")}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
+            >
+              <option value="USD">USD ($)</option>
+              <option value="CNY">CNY (¥)</option>
+            </select>
+            {unitCostCurrency === "CNY" ? (
+              <span className="text-xs text-slate-400">
+                {fxLoading ? "Fetching FX…" : fxError ? fxError : `Rate: 1 CNY = ${fxRateToUsd.toFixed(4)} USD`}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -201,29 +253,34 @@ export function PricingCalculator() {
           <div className="flex items-center justify-between">
             <span className="text-slate-300">Recommended sale price</span>
             <span className="font-semibold text-sky-300">
-              ${result.recommended.toFixed(2)}
+              {formatMoney(result.recommended, "USD")}
+              {unitCostCurrency === "CNY" ? (
+                <span className="ml-2 text-xs text-slate-400">
+                  (= {formatMoney(result.recommended / fxRateToUsd, "CNY")})
+                </span>
+              ) : null}
             </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-300">Buyer tax (est.)</span>
-            <span>${result.tax.toFixed(2)}</span>
+            <span>{formatMoney(result.tax, "USD")}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-300">Order total (est.)</span>
-            <span>${result.orderTotal.toFixed(2)}</span>
+            <span>{formatMoney(result.orderTotal, "USD")}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-300">Commission</span>
-            <span>-${result.commission.toFixed(2)}</span>
+            <span>-{formatMoney(result.commission, "USD")}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-300">Payment processing</span>
-            <span>-${result.processing.toFixed(2)}</span>
+            <span>-{formatMoney(result.processing, "USD")}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-300">Net profit (est.)</span>
             <span className="font-semibold text-sky-300">
-              ${result.net.toFixed(2)}
+              {formatMoney(result.net, "USD")}
             </span>
           </div>
         </div>

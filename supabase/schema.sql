@@ -14,6 +14,15 @@ create table public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- FX rates cache (shared)
+create table public.fx_rates (
+  pair text primary key,
+  base_currency text not null,
+  quote_currency text not null,
+  rate numeric(18,8) not null,
+  fetched_at timestamptz not null default now()
+);
+
 -- Products
 create table public.products (
   id uuid primary key default gen_random_uuid(),
@@ -40,9 +49,22 @@ create table public.inventory_lots (
   quantity_total integer not null check (quantity_total > 0),
   quantity_available integer not null check (quantity_available >= 0),
   purchase_date date not null,
+
+  -- Legacy USD columns (kept for backward compatibility)
   purchase_price_total numeric(12,2) not null,
   fees_total numeric(12,2),
   shipping_total numeric(12,2),
+
+  -- Multi-currency purchase capture
+  purchase_currency text not null default 'USD',
+  fx_rate_to_usd numeric(18,8),
+  purchase_price_total_native numeric(12,2),
+  purchase_price_total_usd numeric(12,2),
+  fees_total_native numeric(12,2),
+  fees_total_usd numeric(12,2),
+  shipping_total_native numeric(12,2),
+  shipping_total_usd numeric(12,2),
+
   created_at timestamptz not null default now()
 );
 
@@ -105,7 +127,7 @@ select
   so.user_id,
   date(so.order_date) as day,
   sum(soi.quantity * soi.price_each) as revenue,
-  sum(coalesce(il.purchase_price_total / nullif(il.quantity_total, 0), 0) * soi.quantity) as cogs,
+  sum(coalesce(il.purchase_price_total_usd / nullif(il.quantity_total, 0), 0) * soi.quantity) as cogs,
   sum(coalesce(so.platform_fees, 0) + coalesce(so.other_fees, 0) + coalesce(so.shipping_cost, 0) - coalesce(so.shipping_charged, 0)) as fees_shipping
 from sales_orders so
 join sales_order_items soi on soi.order_id = so.id
@@ -118,8 +140,8 @@ select
   p.name,
   p.game,
   sum(soi.quantity * soi.price_each) as revenue,
-  sum(coalesce(il.purchase_price_total / nullif(il.quantity_total, 0), 0) * soi.quantity) as cogs,
-  sum((soi.quantity * soi.price_each) - coalesce(il.purchase_price_total / nullif(il.quantity_total, 0), 0) * soi.quantity) as gross_profit
+  sum(coalesce(il.purchase_price_total_usd / nullif(il.quantity_total, 0), 0) * soi.quantity) as cogs,
+  sum((soi.quantity * soi.price_each) - coalesce(il.purchase_price_total_usd / nullif(il.quantity_total, 0), 0) * soi.quantity) as gross_profit
 from sales_order_items soi
 join products p on p.id = soi.product_id
 left join inventory_lots il on il.id = soi.inventory_lot_id
@@ -128,6 +150,7 @@ order by gross_profit desc;
 
 -- Enable RLS
 alter table public.profiles enable row level security;
+alter table public.fx_rates enable row level security;
 alter table public.products enable row level security;
 alter table public.inventory_lots enable row level security;
 alter table public.sales_orders enable row level security;
@@ -143,6 +166,16 @@ create policy "Users insert their profile" on public.profiles
 
 create policy "Users update their profile" on public.profiles
   for update using (id = auth.uid());
+
+-- FX rates are non-user data; allow authenticated users to read/write for caching.
+create policy "FX rates are readable by authenticated" on public.fx_rates
+  for select to authenticated using (true);
+
+create policy "FX rates are writable by authenticated" on public.fx_rates
+  for insert to authenticated with check (true);
+
+create policy "FX rates are updatable by authenticated" on public.fx_rates
+  for update to authenticated using (true) with check (true);
 
 create policy "Products are user scoped" on public.products
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());

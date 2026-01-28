@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/cards";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -41,24 +42,26 @@ export default async function DashboardPage() {
 
   const { data: lots, error: lotsError } = await supabase
     .from("inventory_lots")
-    .select("quantity_total,quantity_available,purchase_price_total")
+    .select("quantity_total,quantity_available,purchase_price_total_usd,purchase_price_total")
     .limit(1000);
 
   if (lotsError) throw new Error(lotsError.message);
 
-  const inventoryCostBasisRemaining = (lots ?? []).reduce((sum, lot) => {
-    const unit = lot.quantity_total > 0 ? Number(lot.purchase_price_total) / lot.quantity_total : 0;
+  const inventoryCostBasisRemainingUsd = (lots ?? []).reduce((sum, lot) => {
+    const lotFx = lot as unknown as { purchase_price_total_usd?: number | null };
+    const usdTotal = Number(lotFx.purchase_price_total_usd ?? lot.purchase_price_total);
+    const unit = lot.quantity_total > 0 ? usdTotal / lot.quantity_total : 0;
     return sum + unit * Number(lot.quantity_available);
   }, 0);
 
   const highlights = [
-    { title: "Revenue (30d)", value: `$${revenue30d.toFixed(2)}` },
-    { title: "Fees (30d)", value: `$${fees30d.toFixed(2)}` },
-    { title: "Shipping Δ (30d)", value: `$${shippingDelta30d.toFixed(2)}` },
-    { title: "Net (approx, 30d)", value: `$${net30dApprox.toFixed(2)}` },
+    { title: "Revenue (30d)", value: formatMoney(revenue30d, "USD") },
+    { title: "Fees (30d)", value: formatMoney(fees30d, "USD") },
+    { title: "Shipping Δ (30d)", value: formatMoney(shippingDelta30d, "USD") },
+    { title: "Net (approx, 30d)", value: formatMoney(net30dApprox, "USD") },
     {
       title: "Remaining Inventory Cost Basis",
-      value: `$${inventoryCostBasisRemaining.toFixed(2)}`,
+      value: formatMoney(inventoryCostBasisRemainingUsd, "USD"),
     },
   ];
 
