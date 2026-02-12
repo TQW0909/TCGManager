@@ -91,3 +91,30 @@ export interface CashFlow {
   note: string | null;
   created_at: string;
 }
+
+export type WhatnotTransactionType = "SALES" | "ADJUSTMENT";
+
+export interface WhatnotTransaction {
+  id: string;
+  user_id: string;
+  transaction_date: string;
+  amount: number;
+  listing_id: string;
+  order_id: string;
+  message: string | null;
+  status: string | null;
+  transaction_type: WhatnotTransactionType;
+  created_at: string;
+}
+
+export type ExpenseCategory = "product_cost" | "operational";
+
+export interface Expense {
+  id: string;
+  user_id: string;
+  category: ExpenseCategory;
+  amount: number;
+  description: string | null;
+  expense_date: string;
+  created_at: string;
+}
