@@ -27,6 +27,9 @@ export function ProductForm() {
   const [setCode, setSetCode] = useState("");
   const [condition, setCondition] = useState<string>("NM");
   const [sku, setSku] = useState("");
+  // New fields for optional inventory
+  const [quantity, setQuantity] = useState("");
+  const [purchasePrice, setPurchasePrice] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -48,7 +51,7 @@ export function ProductForm() {
       return;
     }
 
-    const payload = {
+    const productPayload = {
       user_id: userRes.user.id,
       type,
       name: name.trim(),
@@ -59,20 +62,55 @@ export function ProductForm() {
       sku: sku.trim() || null,
     };
 
-    const { error: insertErr } = await supabase.from("products").insert(payload);
-
-    setLoading(false);
+    // Insert product first
+    const { data: productData, error: insertErr } = await supabase
+      .from("products")
+      .insert(productPayload)
+      .select("id")
+      .single();
 
     if (insertErr) {
+      setLoading(false);
       setError(insertErr.message);
       return;
     }
 
-    setOk("Product added.");
+    // If quantity is provided, create an inventory lot
+    const qty = Math.floor(Number(quantity));
+    const price = Number(purchasePrice);
+    
+    if (qty > 0 && productData?.id) {
+      const today = new Date().toISOString().slice(0, 10);
+      const lotPayload = {
+        user_id: userRes.user.id,
+        product_id: productData.id,
+        quantity_total: qty,
+        quantity_available: qty,
+        purchase_date: today,
+        purchase_price_total: price || 0,
+        purchase_currency: "USD",
+        fx_rate_to_usd: 1,
+        purchase_price_total_native: price || 0,
+        purchase_price_total_usd: price || 0,
+      };
+
+      const { error: lotErr } = await supabase.from("inventory_lots").insert(lotPayload);
+      
+      if (lotErr) {
+        setLoading(false);
+        setError(`Product created but inventory failed: ${lotErr.message}`);
+        return;
+      }
+    }
+
+    setLoading(false);
+    setOk(qty > 0 ? "Product and inventory added." : "Product added.");
     setName("");
     setSetNameValue("");
     setSetCode("");
     setSku("");
+    setQuantity("");
+    setPurchasePrice("");
     // simplest: reload to refresh server list
     window.location.reload();
   }
@@ -181,6 +219,39 @@ export function ProductForm() {
             className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
             placeholder="internal sku"
           />
+        </div>
+
+        {/* Optional inventory section */}
+        <div className="md:col-span-2 border-t border-slate-800 pt-4 mt-2">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400 mb-3">
+            Initial Inventory (optional)
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                Quantity
+              </label>
+              <input
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                inputMode="numeric"
+                className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
+                placeholder="e.g., 10"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                Total Purchase Price ($)
+              </label>
+              <input
+                value={purchasePrice}
+                onChange={(e) => setPurchasePrice(e.target.value)}
+                inputMode="decimal"
+                className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500"
+                placeholder="e.g., 150.00"
+              />
+            </div>
+          </div>
         </div>
 
         {error ? (

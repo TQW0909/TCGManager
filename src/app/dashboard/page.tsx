@@ -7,113 +7,205 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
 
-  const since = new Date();
-  since.setDate(since.getDate() - 30);
+  // Fetch Whatnot transactions for sales data
+  const { data: whatnotTx, error: whatnotError } = await supabase
+    .from("whatnot_transactions")
+    .select("amount,transaction_type");
 
-  const { data: orders, error: ordersError } = await supabase
-    .from("sales_orders")
-    .select(
-      "id,session_name,order_date,platform,platform_fees,other_fees,shipping_charged,shipping_cost, items:sales_order_items(quantity,price_each)"
-    )
-    .gte("order_date", since.toISOString())
-    .order("order_date", { ascending: false })
-    .limit(200);
+  if (whatnotError) throw new Error(whatnotError.message);
 
-  if (ordersError) throw new Error(ordersError.message);
+  // Fetch expenses
+  const { data: expenses, error: expensesError } = await supabase
+    .from("expenses")
+    .select("amount,category");
 
-  const revenue30d = (orders ?? []).reduce((sum, o) => {
-    const items = (o.items as unknown as Array<{ quantity: number; price_each: number }> | null) ?? [];
-    const r = items.reduce((s, it) => s + Number(it.quantity) * Number(it.price_each), 0);
-    return sum + r;
-  }, 0);
+  if (expensesError) throw new Error(expensesError.message);
 
-  const fees30d = (orders ?? []).reduce(
-    (sum, o) => sum + Number(o.platform_fees ?? 0) + Number(o.other_fees ?? 0),
-    0
-  );
-
-  const shippingDelta30d = (orders ?? []).reduce(
-    (sum, o) =>
-      sum + (Number(o.shipping_cost ?? 0) - Number(o.shipping_charged ?? 0)),
-    0
-  );
-
-  const net30dApprox = revenue30d - fees30d - shippingDelta30d;
-
-  const { data: lots, error: lotsError } = await supabase
+  // Fetch inventory lots for product costs
+  const { data: inventoryLots, error: lotsError } = await supabase
     .from("inventory_lots")
-    .select("quantity_total,quantity_available,purchase_price_total_usd,purchase_price_total")
-    .limit(1000);
+    .select("purchase_price_total_usd,purchase_price_total");
 
   if (lotsError) throw new Error(lotsError.message);
 
-  const inventoryCostBasisRemainingUsd = (lots ?? []).reduce((sum, lot) => {
-    const lotFx = lot as unknown as { purchase_price_total_usd?: number | null };
-    const usdTotal = Number(lotFx.purchase_price_total_usd ?? lot.purchase_price_total);
-    const unit = lot.quantity_total > 0 ? usdTotal / lot.quantity_total : 0;
-    return sum + unit * Number(lot.quantity_available);
+  // Calculate totals from Whatnot transactions
+  const totalSales = (whatnotTx ?? [])
+    .filter((tx) => tx.transaction_type === "SALES")
+    .reduce((sum, tx) => sum + Number(tx.amount), 0);
+
+  // Separate positive and negative adjustments
+  const adjustments = (whatnotTx ?? []).filter((tx) => tx.transaction_type === "ADJUSTMENT");
+  
+  const positiveAdjustments = adjustments
+    .filter((tx) => Number(tx.amount) > 0)
+    .reduce((sum, tx) => sum + Number(tx.amount), 0);
+  
+  const negativeAdjustments = adjustments
+    .filter((tx) => Number(tx.amount) < 0)
+    .reduce((sum, tx) => sum + Math.abs(Number(tx.amount)), 0);
+
+  // Calculate inventory costs (products added via Spending page)
+  const inventoryCosts = (inventoryLots ?? []).reduce((sum, lot) => {
+    const usdTotal = Number(lot.purchase_price_total_usd ?? lot.purchase_price_total ?? 0);
+    return sum + usdTotal;
   }, 0);
 
-  const highlights = [
-    { title: "Revenue (30d)", value: formatMoney(revenue30d, "USD") },
-    { title: "Fees (30d)", value: formatMoney(fees30d, "USD") },
-    { title: "Shipping Δ (30d)", value: formatMoney(shippingDelta30d, "USD") },
-    { title: "Net (approx, 30d)", value: formatMoney(net30dApprox, "USD") },
-    {
-      title: "Remaining Inventory Cost Basis",
-      value: formatMoney(inventoryCostBasisRemainingUsd, "USD"),
-    },
-  ];
+  // Calculate other expenses by category
+  const otherProductCosts = (expenses ?? [])
+    .filter((e) => e.category === "product_cost")
+    .reduce((sum, e) => sum + Number(e.amount), 0);
 
-  const recent = (orders ?? []).slice(0, 6).map((o) => {
-    const items = (o.items as unknown as Array<{ quantity: number; price_each: number }> | null) ?? [];
-    const rev = items.reduce((s, it) => s + Number(it.quantity) * Number(it.price_each), 0);
-    return {
-      id: o.id,
-      title: o.session_name ?? "(Untitled session)",
-      detail: `${new Date(o.order_date).toLocaleString()} · ${items.length} items · $${rev.toFixed(2)} revenue`,
-    };
-  });
+  const operationalCosts = (expenses ?? [])
+    .filter((e) => e.category === "operational")
+    .reduce((sum, e) => sum + Number(e.amount), 0);
+
+  // Combined product costs = inventory + other product costs
+  const productCosts = inventoryCosts + otherProductCosts;
+
+  // Total costs = Product costs + Operational costs + Negative adjustments (promotions, etc.)
+  const totalCosts = productCosts + operationalCosts + negativeAdjustments;
+  
+  // Net Profit = Sales + Positive Adjustments (bonuses) - Total Costs
+  const netProfit = totalSales + positiveAdjustments - totalCosts;
+
+  // Fetch recent Whatnot transactions for the list
+  const { data: recentTx, error: recentError } = await supabase
+    .from("whatnot_transactions")
+    .select("id,transaction_date,amount,message,transaction_type")
+    .order("transaction_date", { ascending: false })
+    .limit(6);
+
+  if (recentError) throw new Error(recentError.message);
+
+  const totalRevenue = totalSales + positiveAdjustments;
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {highlights.map((item) => (
-          <Card key={item.title} title={item.title} value={item.value} />
-        ))}
+      {/* Main Metrics */}
+      <section className="grid gap-4 md:grid-cols-4">
+        <div className="glass rounded-2xl p-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Total Revenue
+          </p>
+          <p className="mt-2 text-3xl font-bold text-emerald-400">
+            {formatMoney(totalRevenue, "USD")}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Sales + Bonuses
+          </p>
+        </div>
+        <div className="glass rounded-2xl p-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Total Sales
+          </p>
+          <p className="mt-2 text-2xl font-bold text-emerald-400">
+            {formatMoney(totalSales, "USD")}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            From Whatnot imports
+          </p>
+        </div>
+        <div className="glass rounded-2xl p-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Total Costs
+          </p>
+          <p className="mt-2 text-2xl font-bold text-rose-400">
+            {formatMoney(totalCosts, "USD")}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Products + Operations + Promotions
+          </p>
+        </div>
+        <div className="glass rounded-2xl p-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Net Profit
+          </p>
+          <p className={`mt-2 text-3xl font-bold ${netProfit >= 0 ? "text-sky-400" : "text-rose-400"}`}>
+            {formatMoney(netProfit, "USD")}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Revenue - Costs
+          </p>
+        </div>
       </section>
 
+      {/* Cost Breakdown */}
+      <section className="grid gap-4 md:grid-cols-4">
+        <Card title="Product Costs" value={formatMoney(productCosts, "USD")}>
+          <p className="text-xs text-slate-400 mt-1">Inventory you purchased</p>
+        </Card>
+        <Card title="Operational Costs" value={formatMoney(operationalCosts, "USD")}>
+          <p className="text-xs text-slate-400 mt-1">Supplies, software, etc.</p>
+        </Card>
+        <Card title="Ads Spent" value={"-" + formatMoney(negativeAdjustments, "USD")}>
+          <p className="text-xs text-slate-400 mt-1">Show promotions you paid for</p>
+        </Card>
+        <Card title="Whatnot Bonuses" value={"+" + formatMoney(positiveAdjustments, "USD")}>
+          <p className="text-xs text-slate-400 mt-1">Credits & incentives received</p>
+        </Card>
+      </section>
+
+      {/* Recent Transactions */}
       <section className="glass rounded-2xl p-6">
         <div className="flex flex-col gap-2">
-          <p className="text-sm font-semibold text-slate-50">Recent sessions</p>
+          <p className="text-sm font-semibold text-slate-50">Recent Whatnot Transactions</p>
           <p className="text-sm text-slate-300">
-            Live from Supabase. Next step: item entry + lot allocation for real COGS.
+            Latest imports from your Whatnot CSV data.
           </p>
         </div>
         <div className="mt-4 space-y-3">
-          {recent.map((item) => (
+          {(recentTx ?? []).map((tx) => (
             <div
-              key={item.id}
+              key={tx.id}
               className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3"
             >
-              <p className="font-medium text-slate-50">{item.title}</p>
-              <p className="text-sm text-slate-300">{item.detail}</p>
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-50">
+                    {tx.message || "(No description)"}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {new Date(tx.transaction_date).toLocaleString()} ·{" "}
+                    <span
+                      className={
+                        tx.transaction_type === "SALES"
+                          ? "text-emerald-400"
+                          : "text-purple-400"
+                      }
+                    >
+                      {tx.transaction_type}
+                    </span>
+                  </p>
+                </div>
+                <p
+                  className={`font-medium ${
+                    Number(tx.amount) >= 0 ? "text-emerald-400" : "text-rose-400"
+                  }`}
+                >
+                  {formatMoney(Number(tx.amount), "USD")}
+                </p>
+              </div>
             </div>
           ))}
-          {recent.length ? null : (
+          {(recentTx ?? []).length ? null : (
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-6 text-center text-sm text-slate-400">
-              No sales yet. Create a session in Sales.
+              No transactions yet. Import your Whatnot CSV data to get started.
             </div>
           )}
         </div>
       </section>
 
+      {/* Quick Links */}
       <section className="grid gap-4 md:grid-cols-2">
-        <Card title="Profit over time">
-          Next: connect a chart to `v_sales_profit_by_day`.
+        <Card title="Import Whatnot Data">
+          <p className="text-sm text-slate-300">
+            Go to <span className="text-sky-400">Import</span> to paste your Whatnot CSV export.
+          </p>
         </Card>
-        <Card title="Top products">
-          Next: connect to `v_top_products_by_profit` once sales items are linked to lots.
+        <Card title="Track Spending">
+          <p className="text-sm text-slate-300">
+            Go to <span className="text-sky-400">Spending</span> to log product and operational costs.
+          </p>
         </Card>
       </section>
     </div>
